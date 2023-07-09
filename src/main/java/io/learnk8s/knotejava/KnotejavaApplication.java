@@ -1,5 +1,8 @@
 package io.learnk8s.knotejava;
 
+import java.util.Collections;
+import java.util.List;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -7,6 +10,8 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -47,4 +52,17 @@ class KnoteController {
 
 	@Autowired
 	private NotesRepository notesRepository;
+
+	@GetMapping("/")
+	public String index(Model model) {
+		getAllNotes(model);
+		return "index";
+	}
+
+	private void getAllNotes(Model model) {
+		List<Note> notes = notesRepository.findAll();
+		Collections.reverse(notes);
+		model.addAttribute("notes", notes);
+	}
+
 }
