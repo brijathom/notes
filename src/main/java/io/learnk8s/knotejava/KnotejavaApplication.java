@@ -1,10 +1,12 @@
 package io.learnk8s.knotejava;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.stereotype.Controller;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -38,4 +40,11 @@ class Note {
 
 interface NotesRepository extends MongoRepository<Note, String> {
 
+}
+
+@Controller
+class KnoteController {
+
+	@Autowired
+	private NotesRepository notesRepository;
 }
