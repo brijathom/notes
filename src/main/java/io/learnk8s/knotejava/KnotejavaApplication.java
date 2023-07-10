@@ -65,4 +65,10 @@ class KnoteController {
 		model.addAttribute("notes", notes);
 	}
 
+	private void saveNote(String description, Model model) {
+		if (description != null && !description.trim().isEmpty()) {
+			notesRepository.save(new Note(null, description.trim()));
+			model.addAttribute("description", "");
+		}
+	}
 }
