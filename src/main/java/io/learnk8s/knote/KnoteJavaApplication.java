@@ -1,10 +1,13 @@
 package io.learnk8s.knote;
 
-import java.io.File;
+import java.io.InputStream;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
+import javax.annotation.PostConstruct;
+
+import org.apache.commons.io.IOUtils;
 import org.commonmark.node.Node;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
@@ -14,20 +17,20 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-import org.springframework.web.servlet.resource.PathResourceResolver;
 
+import io.minio.MinioClient;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -62,32 +65,54 @@ class Note {
 	}
 }
 
-@Configuration
-@EnableConfigurationProperties(KnoteProperties.class)
-class KnoteConfig implements WebMvcConfigurer {
-
-	@Autowired
-	private KnoteProperties properties;
-
-	@Override
-	public void addResourceHandlers(ResourceHandlerRegistry registry) {
-		registry.addResourceHandler("/uploads/**").addResourceLocations("file:" + properties.getUploadDir())
-				.setCachePeriod(3600).resourceChain(true).addResolver(new PathResourceResolver());
-	}
-
-}
-
 @ConfigurationProperties(prefix = "knote")
 class KnoteProperties {
-	@Value("${uploadDir:/tmp/uploads/}")
-	private String uploadDir;
 
-	public String getUploadDir() {
-		return uploadDir;
+	@Value("${minio.host:localhost}")
+	private String minioHost;
+
+	@Value("${minio.bucket:image-storage}")
+	private String minioBucket;
+
+	@Value("${minio.access.key:}")
+	private String minioAccessKey;
+
+	@Value("${minio.secret.key:}")
+	private String minioSecretKey;
+
+	@Value("${minio.useSSL:false}")
+	private boolean minioUseSSL;
+
+	@Value("${minio.reconnect.enabled:true}")
+	private boolean minioReconnectEnabled;
+
+	public String getMinioHost() {
+		return minioHost;
+	}
+
+	public String getMinioBucket() {
+		return minioBucket;
+	}
+
+	public String getMinioAccessKey() {
+		return minioAccessKey;
+	}
+
+	public String getMinioSecretKey() {
+		return minioSecretKey;
+	}
+
+	public boolean isMinioUseSSL() {
+		return minioUseSSL;
+	}
+
+	public boolean isMinioReconnectEnabled() {
+		return minioReconnectEnabled;
 	}
 }
 
 @Controller
+@EnableConfigurationProperties(KnoteProperties.class)
 class KNoteController {
 
 	@Autowired
@@ -97,6 +122,13 @@ class KNoteController {
 
 	private Parser parser = Parser.builder().build();
 	private HtmlRenderer renderer = HtmlRenderer.builder().build();
+
+	private MinioClient minioClient;
+
+	@PostConstruct
+	public void init() throws InterruptedException {
+		initMinio();
+	}
 
 	@GetMapping("/")
 	public String index(Model model) {
@@ -124,6 +156,12 @@ class KNoteController {
 		return "index";
 	}
 
+	@GetMapping(value = "/img/{name}", produces = MediaType.IMAGE_PNG_VALUE)
+	public @ResponseBody byte[] getImageByName(@PathVariable String name) throws Exception {
+		InputStream imageStream = minioClient.getObject(properties.getMinioBucket(), name);
+		return IOUtils.toByteArray(imageStream);
+	}
+
 	private void getAllNotes(Model model) {
 		List<Note> notes = notesRepository.findAll();
 		Collections.reverse(notes);
@@ -131,13 +169,10 @@ class KNoteController {
 	}
 
 	private void uploadImage(MultipartFile file, String description, Model model) throws Exception {
-		File uploadsDir = new File(properties.getUploadDir());
-		if (!uploadsDir.exists()) {
-			uploadsDir.mkdirs();
-		}
 		String fileId = UUID.randomUUID().toString() + "." + file.getOriginalFilename().split("\\.")[1];
-		file.transferTo(new File(properties.getUploadDir() + fileId));
-		model.addAttribute("description", description + " ![](/uploads/" + fileId + ")");
+		minioClient.putObject(properties.getMinioBucket(), fileId, file.getInputStream(), file.getSize(), null, null,
+				file.getContentType());
+		model.addAttribute("description", description + " ![](/img/" + fileId + ")");
 	}
 
 	private void saveNote(String description, Model model) {
@@ -147,6 +182,33 @@ class KNoteController {
 			notesRepository.save(new Note(null, html));
 			model.addAttribute("description", "");
 		}
+	}
+
+	private void initMinio() throws InterruptedException {
+		boolean success = false;
+		while (!success) {
+			try {
+				minioClient = new MinioClient("http://" + properties.getMinioHost() + ":9000",
+						properties.getMinioAccessKey(), properties.getMinioSecretKey(), false);
+				boolean isExist = minioClient.bucketExists(properties.getMinioBucket());
+				if (isExist) {
+					System.out.println("> Bucket already exists.");
+				} else {
+					minioClient.makeBucket(properties.getMinioBucket());
+				}
+				success = true;
+			} catch (Exception e) {
+				e.printStackTrace();
+				System.out.println("> Minio Reconnect: " + properties.isMinioReconnectEnabled());
+				if (properties.isMinioReconnectEnabled()) {
+					Thread.sleep(5000);
+				} else {
+					success = true;
+
+				}
+			}
+		}
+		System.out.println("> Minio initialized!");
 	}
 
 }
